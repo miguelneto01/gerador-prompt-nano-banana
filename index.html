@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gerador de Prompt · Nano Banana</title>
-<meta name="description" content="Leia uma foto de referência direto no navegador e gere um prompt detalhado para o Nano Banana. Sem API, sem chave, 100% local.">
+<meta name="description" content="Leia uma foto de referência direto no navegador (modelo Florence-2) e gere um prompt detalhado para o Nano Banana. Sem API, sem chave, 100% local.">
 <style>
   :root{
     --bg:#0f1115; --surface:#171a21; --surface-2:#1e222b; --border:#2a2f3a;
@@ -57,12 +57,13 @@
   .copy:hover{border-color:var(--accent)}
   .note{font-size:12.5px;color:var(--muted);margin-top:18px;border-top:1px solid var(--border);padding-top:14px}
   .err{color:#ff6b6b;font-size:13.5px;margin-top:10px;display:none}
+  .badge{display:inline-block;font-size:11px;background:var(--surface-2);border:1px solid var(--border);color:var(--muted);padding:2px 8px;border-radius:999px;margin-left:6px}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <h1>Gerador de Prompt <span class="banana">· Nano Banana</span></h1>
-  <p class="sub">Suba uma foto de referência. O navegador lê a imagem (100% local, sem servidor) e te devolve um prompt detalhado pra colar no Nano Banana junto da sua selfie.</p>
+  <h1>Gerador de Prompt <span class="banana">· Nano Banana</span><span class="badge" id="eng">Florence-2</span></h1>
+  <p class="sub">Suba uma foto de referência. O navegador lê a imagem em detalhe (100% local, sem servidor) e te devolve um prompt rico pra colar no Nano Banana junto da sua selfie.</p>
 
   <div class="card">
     <label class="field">1 · Foto de referência</label>
@@ -112,17 +113,19 @@
 
   <p class="note">
     <strong>Como usar:</strong> copie o prompt, abra o Nano Banana (app Gemini ou API), envie <strong>a sua própria selfie</strong> junto do prompt e gere.<br><br>
-    <strong>Privacidade:</strong> a leitura da imagem acontece 100% no seu navegador — sua foto não é enviada a nenhum servidor.<br><br>
+    <strong>Privacidade:</strong> a leitura da imagem acontece 100% no seu navegador (modelo Florence-2) — sua foto não é enviada a nenhum servidor.<br><br>
+    <strong>Dica:</strong> funciona melhor em navegadores com WebGPU (Chrome/Edge atuais). Na primeira vez o modelo é baixado (pode levar de alguns segundos a ~1 min) e depois fica em cache.<br><br>
     <strong>Uso responsável:</strong> use só com fotos suas ou de quem autorizou. Não recrie o rosto de outra pessoa sem consentimento.
   </p>
 </div>
 
 <script type="module">
-import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+import { Florence2ForConditionalGeneration, AutoProcessor, AutoTokenizer, RawImage, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3';
 env.allowLocalModels = false;
 
 const $=id=>document.getElementById(id);
-let file=null, preset="fiel", lang="pt", captioner=null, busy=false;
+let file=null, preset="fiel", lang="pt", busy=false;
+let model=null, processor=null, tokenizer=null;
 const go=$("go"), err=$("err"), out=$("out"), result=$("result"), prog=$("prog"), fill=$("fill"), plbl=$("plbl");
 
 function setFile(f){
@@ -171,7 +174,7 @@ function buildPrompt(caption){
   if(lang==="en"){
     return [
       "Generate a photorealistic image of the SAME PERSON from the reference selfie provided, preserving their face, facial features, hair and body proportions with full fidelity. Do not change the identity.",
-      "Scene and composition (from the reference image): "+caption+".",
+      "Scene and composition (from the reference image): "+caption,
       "Style: "+PRESET.en[preset],
       "Lighting and background consistent with the described scene. Ultra-detailed, realistic skin texture, professional sharpness.",
       extra?("Extra adjustments: "+extra):"",
@@ -180,7 +183,7 @@ function buildPrompt(caption){
   }
   return [
     "Gere uma imagem fotorrealista da MESMA PESSOA da selfie de referência enviada, preservando com total fidelidade o rosto, os traços faciais, o cabelo e as proporções do corpo. Não altere a identidade.",
-    "Cena e composição (baseada na imagem de referência): "+caption+".",
+    "Cena e composição (baseada na imagem de referência): "+caption,
     "Estilo: "+PRESET.pt[preset],
     "Iluminação e fundo coerentes com a cena descrita. Altíssimo nível de detalhe, textura de pele realista e nitidez profissional.",
     extra?("Ajustes extras: "+extra):"",
@@ -189,33 +192,47 @@ function buildPrompt(caption){
 }
 
 async function ensureModel(){
-  if(captioner) return captioner;
-  prog.style.display="block"; plbl.textContent="Baixando o modelo de visão (só na primeira vez)…";
-  captioner = await pipeline('image-to-text','Xenova/vit-gpt2-image-captioning',{
-    progress_callback:(p)=>{
-      if(p.status==='progress' && p.total){
-        const pct=Math.round(p.progress||((p.loaded/p.total)*100));
-        fill.style.width=pct+"%"; plbl.textContent="Baixando modelo: "+pct+"%";
-      }else if(p.status==='ready'){ fill.style.width="100%"; }
-    }
-  });
-  plbl.textContent="Modelo pronto."; setTimeout(()=>{prog.style.display="none";},800);
-  return captioner;
+  if(model) return;
+  const id='onnx-community/Florence-2-base-ft';
+  const gpu = ('gpu' in navigator);
+  const device = gpu ? 'webgpu' : 'wasm';
+  const dtype = gpu
+    ? { embed_tokens:'fp16', vision_encoder:'fp16', encoder_model:'fp16', decoder_model_merged:'q4' }
+    : { embed_tokens:'fp32', vision_encoder:'fp32', encoder_model:'fp32', decoder_model_merged:'q8' };
+  prog.style.display="block";
+  plbl.textContent=(gpu?"Carregando Florence-2 (WebGPU)":"Carregando Florence-2 (CPU — pode demorar)")+" — só na primeira vez…";
+  const pc=(p)=>{ if(p.status==='progress'&&p.total){ const pct=Math.round(p.progress||((p.loaded/p.total)*100)); fill.style.width=pct+"%"; plbl.textContent="Baixando modelo: "+pct+"%"; } };
+  model = await Florence2ForConditionalGeneration.from_pretrained(id,{ dtype, device, progress_callback:pc });
+  processor = await AutoProcessor.from_pretrained(id);
+  tokenizer = await AutoTokenizer.from_pretrained(id);
+  fill.style.width="100%"; plbl.textContent="Modelo pronto."; setTimeout(()=>{prog.style.display="none";},800);
+}
+
+async function describe(f){
+  const url=URL.createObjectURL(f);
+  let image;
+  try{ image = await RawImage.fromURL(url); } finally { URL.revokeObjectURL(url); }
+  const task='<MORE_DETAILED_CAPTION>';
+  const prompts = processor.construct_prompts(task);
+  const vision_inputs = await processor(image, prompts);
+  const text_inputs = tokenizer(prompts);
+  const generated_ids = await model.generate({ ...text_inputs, ...vision_inputs, max_new_tokens:256, num_beams:1, do_sample:false });
+  const generated_text = tokenizer.batch_decode(generated_ids,{ skip_special_tokens:false })[0];
+  const parsed = processor.post_process_generation(generated_text, task, image.size);
+  let cap = parsed && parsed[task] ? parsed[task] : "";
+  return (cap||"").toString().trim();
 }
 
 go.addEventListener("click",async()=>{
   if(!file||busy) return; hideErr(); busy=true; go.disabled=true; go.textContent="Lendo a imagem…";
-  out.style.display="block"; result.textContent="Analisando a imagem…";
+  out.style.display="block"; result.textContent="Analisando a imagem em detalhe…";
   try{
-    const model=await ensureModel();
-    const url=URL.createObjectURL(file);
-    const res=await model(url);
-    URL.revokeObjectURL(url);
-    let caption=(Array.isArray(res)&&res[0]&&res[0].generated_text)?res[0].generated_text.trim():"";
-    if(!caption) caption=(lang==="en"?"a person in the described setting":"uma pessoa no cenário descrito");
+    await ensureModel();
+    let caption=await describe(file);
+    if(!caption) caption=(lang==="en"?"a person in the described setting.":"uma pessoa no cenário descrito.");
     result.textContent=buildPrompt(caption);
   }catch(e){
-    showErr("Não consegui carregar o modelo ou ler a imagem. Verifique a conexão e tente de novo. ("+(e&&e.message?e.message:e)+")");
+    showErr("Não consegui carregar o modelo ou ler a imagem. Tente num navegador atualizado (Chrome) e verifique a conexão. ("+(e&&e.message?e.message:e)+")");
     out.style.display="none"; prog.style.display="none";
   }finally{ busy=false; refreshBtn(); }
 });
