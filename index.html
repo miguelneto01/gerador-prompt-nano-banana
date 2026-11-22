@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gerador de Prompt · Nano Banana</title>
+<meta name="description" content="Leia uma foto de referência direto no navegador e gere um prompt detalhado para o Nano Banana. Sem API, sem chave, 100% local.">
+<style>
+  :root{
+    --bg:#0f1115; --surface:#171a21; --surface-2:#1e222b; --border:#2a2f3a;
+    --text:#e8eaf0; --muted:#9aa2b1; --accent:#f5c542; --accent-ink:#1a1500; --radius:14px;
+  }
+  @media (prefers-color-scheme: light){
+    :root{ --bg:#f7f7f4; --surface:#fff; --surface-2:#f1f1ec; --border:#e2e2db;
+      --text:#1b1c1a; --muted:#6b6f78; --accent:#e0a800; --accent-ink:#1a1500; }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.6;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:760px;margin:0 auto;padding:28px 20px 60px}
+  h1{font-size:23px;font-weight:600;margin:0 0 4px;letter-spacing:-.01em}
+  .banana{color:var(--accent)}
+  .sub{color:var(--muted);font-size:15px;margin:0 0 22px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:18px;margin-bottom:16px}
+  label.field{display:block;font-size:13px;font-weight:600;color:var(--muted);margin:0 0 8px;text-transform:uppercase;letter-spacing:.04em}
+  .drop{border:1.5px dashed var(--border);border-radius:var(--radius);padding:26px;text-align:center;cursor:pointer;transition:.15s;background:var(--surface-2)}
+  .drop:hover,.drop.over{border-color:var(--accent);background:var(--surface)}
+  .drop input{display:none}
+  .drop .big{font-size:15px;font-weight:500}
+  .drop .small{font-size:13px;color:var(--muted);margin-top:4px}
+  .preview{display:none;gap:14px;align-items:center}
+  .preview img{width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid var(--border)}
+  .preview .meta{font-size:13px;color:var(--muted);flex:1;min-width:0;word-break:break-all}
+  .linkbtn{background:none;border:none;color:var(--accent);cursor:pointer;font-size:13px;padding:0;font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{border:1px solid var(--border);background:var(--surface-2);color:var(--text);padding:8px 13px;border-radius:999px;font-size:13.5px;cursor:pointer;transition:.12s}
+  .chip:hover{border-color:var(--accent)}
+  .chip[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+  textarea{width:100%;background:var(--surface-2);border:1px solid var(--border);border-radius:10px;color:var(--text);padding:11px 13px;font-size:14px;font-family:inherit;resize:vertical;min-height:62px}
+  textarea:focus{outline:none;border-color:var(--accent)}
+  .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+  .toggle{display:flex;border:1px solid var(--border);border-radius:999px;overflow:hidden}
+  .toggle button{background:var(--surface-2);border:none;color:var(--muted);padding:7px 14px;font-size:13px;cursor:pointer}
+  .toggle button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .generate{width:100%;background:var(--accent);color:var(--accent-ink);border:none;border-radius:12px;padding:14px;font-size:16px;font-weight:600;cursor:pointer;transition:.12s;margin-top:4px}
+  .generate:hover{filter:brightness(1.05)}
+  .generate:disabled{opacity:.5;cursor:not-allowed}
+  .prog{display:none;margin-top:12px}
+  .prog .track{height:8px;background:var(--surface-2);border-radius:999px;overflow:hidden;border:1px solid var(--border)}
+  .prog .fill{height:100%;width:0;background:var(--accent);transition:width .2s}
+  .prog .lbl{font-size:12.5px;color:var(--muted);margin-top:6px}
+  .out{display:none}
+  .out .box{background:var(--surface-2);border:1px solid var(--border);border-radius:10px;padding:14px;font-size:14.5px;white-space:pre-wrap;min-height:60px}
+  .out .bar{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .copy{background:var(--surface-2);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 13px;font-size:13px;cursor:pointer;font-weight:600}
+  .copy:hover{border-color:var(--accent)}
+  .note{font-size:12.5px;color:var(--muted);margin-top:18px;border-top:1px solid var(--border);padding-top:14px}
+  .err{color:#ff6b6b;font-size:13.5px;margin-top:10px;display:none}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Gerador de Prompt <span class="banana">· Nano Banana</span></h1>
+  <p class="sub">Suba uma foto de referência. O navegador lê a imagem (100% local, sem servidor) e te devolve um prompt detalhado pra colar no Nano Banana junto da sua selfie.</p>
+
+  <div class="card">
+    <label class="field">1 · Foto de referência</label>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="image/*">
+      <div class="big">Arraste uma imagem ou clique para escolher</div>
+      <div class="small">A cena, pose e estilo que você quer imitar</div>
+    </label>
+    <div class="preview" id="preview">
+      <img id="thumb" alt="pré-visualização">
+      <div class="meta" id="fname"></div>
+      <button class="linkbtn" id="remove" type="button">Trocar</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field">2 · Estilo do prompt</label>
+    <div class="chips" id="presets">
+      <button class="chip" data-k="fiel" aria-pressed="true" type="button">Fiel à imagem</button>
+      <button class="chip" data-k="ensaio" aria-pressed="false" type="button">Ensaio fotográfico</button>
+      <button class="chip" data-k="corp" aria-pressed="false" type="button">Retrato corporativo</button>
+      <button class="chip" data-k="render" aria-pressed="false" type="button">Avatar 3D / render</button>
+      <button class="chip" data-k="cine" aria-pressed="false" type="button">Cinematográfico</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <label class="field">3 · Ajustes (opcional)</label>
+    <textarea id="extra" placeholder="Ex.: fundo neutro, roupa social, luz suave, formato vertical 9:16…"></textarea>
+    <div class="row" style="margin-top:12px">
+      <span style="font-size:13px;color:var(--muted)">Idioma do prompt:</span>
+      <div class="toggle" id="lang">
+        <button data-l="pt" aria-pressed="true" type="button">Português</button>
+        <button data-l="en" aria-pressed="false" type="button">Inglês</button>
+      </div>
+    </div>
+  </div>
+
+  <button class="generate" id="go" disabled>Suba uma foto para começar</button>
+  <div class="prog" id="prog"><div class="track"><div class="fill" id="fill"></div></div><div class="lbl" id="plbl"></div></div>
+  <div class="err" id="err"></div>
+
+  <div class="out card" id="out" style="margin-top:16px">
+    <div class="bar"><label class="field" style="margin:0">Seu prompt</label><button class="copy" id="copy" type="button">Copiar</button></div>
+    <div class="box" id="result"></div>
+  </div>
+
+  <p class="note">
+    <strong>Como usar:</strong> copie o prompt, abra o Nano Banana (app Gemini ou API), envie <strong>a sua própria selfie</strong> junto do prompt e gere.<br><br>
+    <strong>Privacidade:</strong> a leitura da imagem acontece 100% no seu navegador — sua foto não é enviada a nenhum servidor.<br><br>
+    <strong>Uso responsável:</strong> use só com fotos suas ou de quem autorizou. Não recrie o rosto de outra pessoa sem consentimento.
+  </p>
+</div>
+
+<script type="module">
+import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+env.allowLocalModels = false;
+
+const $=id=>document.getElementById(id);
+let file=null, preset="fiel", lang="pt", captioner=null, busy=false;
+const go=$("go"), err=$("err"), out=$("out"), result=$("result"), prog=$("prog"), fill=$("fill"), plbl=$("plbl");
+
+function setFile(f){
+  if(!f||!/^image\//.test(f.type)){ showErr("Escolha um arquivo de imagem."); return; }
+  file=f;
+  $("thumb").src=URL.createObjectURL(f);
+  $("fname").textContent=f.name+" · "+Math.round(f.size/1024)+" KB";
+  $("drop").style.display="none"; $("preview").style.display="flex";
+  hideErr(); refreshBtn();
+}
+$("file").addEventListener("change",e=>{ if(e.target.files[0]) setFile(e.target.files[0]); });
+const drop=$("drop");
+["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("over")}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("over")}));
+drop.addEventListener("drop",e=>{ if(e.dataTransfer.files[0]) setFile(e.dataTransfer.files[0]); });
+$("remove").addEventListener("click",()=>{ file=null; $("file").value=""; $("preview").style.display="none"; $("drop").style.display="block"; refreshBtn(); });
+
+$("presets").addEventListener("click",e=>{ const b=e.target.closest(".chip"); if(!b)return;
+  [...e.currentTarget.children].forEach(c=>c.setAttribute("aria-pressed","false")); b.setAttribute("aria-pressed","true"); preset=b.dataset.k; });
+$("lang").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b)return;
+  [...e.currentTarget.children].forEach(c=>c.setAttribute("aria-pressed","false")); b.setAttribute("aria-pressed","true"); lang=b.dataset.l; });
+
+function showErr(m){ err.textContent=m; err.style.display="block"; }
+function hideErr(){ err.style.display="none"; }
+function refreshBtn(){ if(busy)return; go.disabled=!file; go.textContent=file?"Gerar prompt":"Suba uma foto para começar"; }
+
+const PRESET={
+  pt:{
+    fiel:"Recrie a cena da referência o mais fielmente possível: mesma pose, roupa, luz e ambiente.",
+    ensaio:"Ensaio fotográfico profissional: luz de estúdio, nitidez alta e textura de pele natural.",
+    corp:"Retrato corporativo/LinkedIn: postura confiante, roupa social, fundo neutro desfocado e iluminação limpa.",
+    render:"Avatar 3D / render realista de alta qualidade, mantendo as feições reais da pessoa.",
+    cine:"Visual cinematográfico: color grading, profundidade de campo, luz dramática e clima de filme."
+  },
+  en:{
+    fiel:"Recreate the reference scene as faithfully as possible: same pose, outfit, lighting and environment.",
+    ensaio:"Professional photo shoot: studio lighting, high sharpness and natural skin texture.",
+    corp:"Corporate/LinkedIn headshot: confident posture, business attire, clean blurred neutral background and even lighting.",
+    render:"High-quality realistic 3D avatar render, keeping the person's real facial features.",
+    cine:"Cinematic look: color grading, shallow depth of field, dramatic lighting and film mood."
+  }
+};
+
+function buildPrompt(caption){
+  const extra=$("extra").value.trim();
+  if(lang==="en"){
+    return [
+      "Generate a photorealistic image of the SAME PERSON from the reference selfie provided, preserving their face, facial features, hair and body proportions with full fidelity. Do not change the identity.",
+      "Scene and composition (from the reference image): "+caption+".",
+      "Style: "+PRESET.en[preset],
+      "Lighting and background consistent with the described scene. Ultra-detailed, realistic skin texture, professional sharpness.",
+      extra?("Extra adjustments: "+extra):"",
+      "Keep the person's identity from the selfie; use the reference only for scene, pose and style."
+    ].filter(Boolean).join("\n\n");
+  }
+  return [
+    "Gere uma imagem fotorrealista da MESMA PESSOA da selfie de referência enviada, preservando com total fidelidade o rosto, os traços faciais, o cabelo e as proporções do corpo. Não altere a identidade.",
+    "Cena e composição (baseada na imagem de referência): "+caption+".",
+    "Estilo: "+PRESET.pt[preset],
+    "Iluminação e fundo coerentes com a cena descrita. Altíssimo nível de detalhe, textura de pele realista e nitidez profissional.",
+    extra?("Ajustes extras: "+extra):"",
+    "Mantenha a identidade da pessoa da selfie; use a referência apenas para cena, pose e estilo."
+  ].filter(Boolean).join("\n\n");
+}
+
+async function ensureModel(){
+  if(captioner) return captioner;
+  prog.style.display="block"; plbl.textContent="Baixando o modelo de visão (só na primeira vez)…";
+  captioner = await pipeline('image-to-text','Xenova/vit-gpt2-image-captioning',{
+    progress_callback:(p)=>{
+      if(p.status==='progress' && p.total){
+        const pct=Math.round(p.progress||((p.loaded/p.total)*100));
+        fill.style.width=pct+"%"; plbl.textContent="Baixando modelo: "+pct+"%";
+      }else if(p.status==='ready'){ fill.style.width="100%"; }
+    }
+  });
+  plbl.textContent="Modelo pronto."; setTimeout(()=>{prog.style.display="none";},800);
+  return captioner;
+}
+
+go.addEventListener("click",async()=>{
+  if(!file||busy) return; hideErr(); busy=true; go.disabled=true; go.textContent="Lendo a imagem…";
+  out.style.display="block"; result.textContent="Analisando a imagem…";
+  try{
+    const model=await ensureModel();
+    const url=URL.createObjectURL(file);
+    const res=await model(url);
+    URL.revokeObjectURL(url);
+    let caption=(Array.isArray(res)&&res[0]&&res[0].generated_text)?res[0].generated_text.trim():"";
+    if(!caption) caption=(lang==="en"?"a person in the described setting":"uma pessoa no cenário descrito");
+    result.textContent=buildPrompt(caption);
+  }catch(e){
+    showErr("Não consegui carregar o modelo ou ler a imagem. Verifique a conexão e tente de novo. ("+(e&&e.message?e.message:e)+")");
+    out.style.display="none"; prog.style.display="none";
+  }finally{ busy=false; refreshBtn(); }
+});
+
+$("copy").addEventListener("click",function(){
+  const t=result.textContent||"", btn=this;
+  const done=()=>{btn.textContent="Copiado!";setTimeout(()=>btn.textContent="Copiar",1400)};
+  if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(t).then(done).catch(()=>{fb(t);done()}); }
+  else{ fb(t); done(); }
+  function fb(x){const ta=document.createElement("textarea");ta.value=x;document.body.appendChild(ta);ta.select();try{document.execCommand("copy")}catch(e){}document.body.removeChild(ta);}
+});
+</script>
+</body>
+</html>
